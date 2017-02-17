@@ -1,38 +1,38 @@
-/* 
-   This is a slightly hacked-up browser only version of clarinet 
-   
-      *  some features removed to help keep browser Oboe under 
+/*
+   This is a slightly hacked-up browser only version of clarinet
+
+      *  some features removed to help keep browser Oboe under
          the 5k micro-library limit
       *  plug directly into event bus
-   
+
    For the original go here:
       https://github.com/dscape/clarinet
 
    We receive the events:
       STREAM_DATA
       STREAM_END
-      
+
    We emit the events:
       SAX_KEY
       SAX_VALUE_OPEN
-      SAX_VALUE_CLOSE      
-      FAIL_EVENT      
+      SAX_VALUE_CLOSE
+      FAIL_EVENT
  */
 
 function clarinet(eventBus) {
   "use strict";
-   
-  var 
+
+  var
       // shortcut some events on the bus
       emitSaxKey           = eventBus(SAX_KEY).emit,
       emitValueOpen        = eventBus(SAX_VALUE_OPEN).emit,
       emitValueClose       = eventBus(SAX_VALUE_CLOSE).emit,
       emitFail             = eventBus(FAIL_EVENT).emit,
-              
+
       MAX_BUFFER_LENGTH = 64 * 1024
   ,   stringTokenPattern = /[\\"\n]/g
   ,   _n = 0
-  
+
       // states
   ,   BEGIN                = _n++
   ,   VALUE                = _n++ // general stuff
@@ -58,11 +58,11 @@ function clarinet(eventBus) {
 
       // setup initial parser values
   ,   bufferCheckPosition  = MAX_BUFFER_LENGTH
-  ,   latestError                
-  ,   c                    
-  ,   p                    
+  ,   latestError
+  ,   c
+  ,   p
   ,   textNode             = undefined
-  ,   numberNode           = ""     
+  ,   numberNode           = ""
   ,   slashed              = false
   ,   closed               = false
   ,   state                = BEGIN
@@ -76,9 +76,9 @@ function clarinet(eventBus) {
   ;
 
   function checkBufferLength () {
-     
+
     var maxActual = 0;
-     
+
     if (textNode !== undefined && textNode.length > MAX_BUFFER_LENGTH) {
       emitError("Max buffer length exceeded: textNode");
       maxActual = Math.max(maxActual, textNode.length);
@@ -87,17 +87,17 @@ function clarinet(eventBus) {
       emitError("Max buffer length exceeded: numberNode");
       maxActual = Math.max(maxActual, numberNode.length);
     }
-     
+
     bufferCheckPosition = (MAX_BUFFER_LENGTH - maxActual)
                                + position;
   }
 
   eventBus(STREAM_DATA).on(handleData);
 
-   /* At the end of the http content close the clarinet 
-    This will provide an error if the total content provided was not 
+   /* At the end of the http content close the clarinet
+    This will provide an error if the total content provided was not
     valid json, ie if not all arrays, objects and Strings closed properly */
-  eventBus(STREAM_END).on(handleStreamEnd);   
+  eventBus(STREAM_END).on(handleStreamEnd);
 
   function emitError (errorString) {
      if (textNode !== undefined) {
@@ -109,7 +109,7 @@ function clarinet(eventBus) {
      latestError = Error(errorString + "\nLn: "+line+
                                        "\nCol: "+column+
                                        "\nChr: "+c);
-     
+
      emitFail(errorReport(undefined, undefined, latestError));
   }
 
@@ -118,12 +118,12 @@ function clarinet(eventBus) {
       // Handle the case where the stream closes without ever receiving
       // any input. This isn't an error - response bodies can be blank,
       // particularly for 204 http responses
-      
+
       // Because of how Oboe is currently implemented, we parse a
       // completely empty stream as containing an empty object.
       // This is because Oboe's done event is only fired when the
       // root object of the JSON stream closes.
-      
+
       // This should be decoupled and attached instead to the input stream
       // from the http (or whatever) resource ending.
       // If this decoupling could happen the SAX parser could simply emit
@@ -134,40 +134,41 @@ function clarinet(eventBus) {
       closed = true;
       return;
     }
-  
+
     if (state !== VALUE || depth !== 0)
       emitError("Unexpected end");
- 
+
     if (textNode !== undefined) {
       emitValueOpen(textNode);
       emitValueClose();
       textNode = undefined;
     }
-     
+
     closed = true;
   }
 
   function whitespace(c){
      return c == '\r' || c == '\n' || c == ' ' || c == '\t';
   }
-   
+
   function handleData (chunk) {
-         
+
     // this used to throw the error but inside Oboe we will have already
     // gotten the error when it was emitted. The important thing is to
     // not continue with the parse.
     if (latestError)
       return;
-      
+
     if (closed) {
        return emitError("Cannot write after close");
     }
 
     var i = 0;
-    c = chunk[0]; 
+    c = chunk[0];
 
     while (c) {
-      p = c;
+      if (i > 0)
+        p = c;
       c = chunk[i++];
       if(!c) break;
 
@@ -244,7 +245,7 @@ function clarinet(eventBus) {
                 textNode = undefined;
              }
              state  = OPEN_KEY;
-          } else 
+          } else
              return emitError('Bad object');
         continue;
 
@@ -253,7 +254,7 @@ function clarinet(eventBus) {
           if (whitespace(c)) continue;
           if(state===OPEN_ARRAY) {
             emitValueOpen([]);
-            depth++;             
+            depth++;
             state = VALUE;
             if(c === ']') {
               emitValueClose();
@@ -278,7 +279,7 @@ function clarinet(eventBus) {
           } else if('123456789'.indexOf(c) !== -1) {
             numberNode += c;
             state = NUMBER_DIGIT;
-          } else               
+          } else
             return emitError("Bad value");
         continue;
 
@@ -302,7 +303,7 @@ function clarinet(eventBus) {
             state = stack.pop() || VALUE;
           } else if (whitespace(c))
               continue;
-          else 
+          else
              return emitError('Bad array');
         continue;
 
@@ -313,7 +314,7 @@ function clarinet(eventBus) {
 
           // thanks thejh, this is an about 50% performance improvement.
           var starti              = i-1;
-           
+
           STRING_BIGLOOP: while (true) {
 
             // zero means "no unicode active". 1-4 mean "parse some more". end after 4.
@@ -453,7 +454,7 @@ function clarinet(eventBus) {
             emitValueOpen(null);
             emitValueClose();
             state = stack.pop() || VALUE;
-          } else 
+          } else
              return emitError('Invalid null started with nul'+ c);
         continue;
 
@@ -461,7 +462,7 @@ function clarinet(eventBus) {
           if(c==='.') {
             numberNode += c;
             state       = NUMBER_DIGIT;
-          } else 
+          } else
              return emitError('Leading zero not followed by .');
         continue;
 
